@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -66,6 +67,18 @@ func main() {
 			h(w, r)
 		}
 	}
+
+	mux.HandleFunc("/", withCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "Welcome to ProBooth Backend API",
+			"status":  "active",
+		})
+	}))
 
 	mux.HandleFunc("/api/status", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		dbStatus := "disconnected"
