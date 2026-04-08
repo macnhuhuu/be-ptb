@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -92,25 +93,8 @@ func main() {
 		})
 	}))
 
-	mux.HandleFunc("/api/sessions/", withCORS(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			idStr := r.URL.Path[len("/api/sessions/"):]
-			objID, err := primitive.ObjectIDFromHex(idStr)
-			if err != nil {
-				http.Error(w, "ID không hợp lệ", http.StatusBadRequest)
-				return
-			}
-			var sess Session
-			err = sessionsCollection.FindOne(context.TODO(), bson.M{"_id": objID}).Decode(&sess)
-			if err != nil {
-				http.Error(w, "Không tìm thấy phiên chụp", http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(sess)
-			return
-		}
-
+	mux.HandleFunc("/api/sessions", withCORS(func(w http.ResponseWriter, r *http.Request) {
+		// --- TRƯỜNG HỢP POST (LƯU ẢNH) ---
 		if r.Method == http.MethodPost {
 			var sess Session
 			if err := json.NewDecoder(r.Body).Decode(&sess); err != nil {
@@ -127,11 +111,40 @@ func main() {
 				}
 				sess.ID = res.InsertedID.(primitive.ObjectID)
 			} else {
-				sess.ID = primitive.NewObjectID() // Mock ID if DB is down
+				sess.ID = primitive.NewObjectID()
 			}
 
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(sess)
+			return
+		}
+
+		// --- TRƯỜNG HỢP GET (LẤY ẢNH QUA ID) ---
+		// URL có dạng /api/sessions/643...
+		if r.Method == http.MethodGet {
+			path := strings.TrimPrefix(r.URL.Path, "/api/sessions")
+			idStr := strings.TrimPrefix(path, "/")
+			
+			if idStr == "" {
+				http.Error(w, "Thiếu ID phiên chụp", http.StatusBadRequest)
+				return
+			}
+
+			objID, err := primitive.ObjectIDFromHex(idStr)
+			if err != nil {
+				http.Error(w, "Định dạng ID không hợp lệ: "+idStr, http.StatusBadRequest)
+				return
+			}
+
+			var sess Session
+			err = sessionsCollection.FindOne(context.TODO(), bson.M{"_id": objID}).Decode(&sess)
+			if err != nil {
+				http.Error(w, "Không tìm thấy phiên chụp trong MongoDB", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(sess)
+			return
 		}
 	}))
 
