@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -91,7 +92,25 @@ func main() {
 		})
 	}))
 
-	mux.HandleFunc("/api/sessions", withCORS(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/sessions/", withCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			idStr := r.URL.Path[len("/api/sessions/"):]
+			objID, err := primitive.ObjectIDFromHex(idStr)
+			if err != nil {
+				http.Error(w, "ID không hợp lệ", http.StatusBadRequest)
+				return
+			}
+			var sess Session
+			err = sessionsCollection.FindOne(context.TODO(), bson.M{"_id": objID}).Decode(&sess)
+			if err != nil {
+				http.Error(w, "Không tìm thấy phiên chụp", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(sess)
+			return
+		}
+
 		if r.Method == http.MethodPost {
 			var sess Session
 			if err := json.NewDecoder(r.Body).Decode(&sess); err != nil {
