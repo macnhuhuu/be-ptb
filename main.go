@@ -8,10 +8,18 @@ import (
 	"os"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
+
+type Session struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
+	Photos    []string          `bson:"photos" json:"photos"`
+	CreatedAt time.Time          `bson:"created_at" json:"createdAt"`
+}
 
 type StatusResponse struct {
 	Status  string `json:"status"`
@@ -20,13 +28,12 @@ type StatusResponse struct {
 }
 
 var mongoClient *mongo.Client
+var sessionsCollection *mongo.Collection
 
 func main() {
-	// MongoDB Connection
 	mongoURI := os.Getenv("MONGO_URI")
 	if mongoURI == "" {
-		// Dùng URI cứng với mật khẩu cần thay thế nếu chưa có trong biến môi trường
-		mongoURI = "mongodb://macchu:<db_password>@ac-pyjeukq-shard-00-00.qlupeij.mongodb.net:27017,ac-pyjeukq-shard-00-01.qlupeij.mongodb.net:27017,ac-pyjeukq-shard-00-02.qlupeij.mongodb.net:27017/?ssl=true&replicaSet=atlas-8ps0fd-shard-0&authSource=admin&appName=Cluster0"
+		mongoURI = "mongodb://macchu:huuhuu123@ac-pyjeukq-shard-00-00.qlupeij.mongodb.net:27017,ac-pyjeukq-shard-00-01.qlupeij.mongodb.net:27017,ac-pyjeukq-shard-00-02.qlupeij.mongodb.net:27017/?ssl=true&replicaSet=atlas-8ps0fd-shard-0&authSource=admin&appName=Cluster0"
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -34,37 +41,71 @@ func main() {
 	
 	client, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
 	if err != nil {
-		log.Printf("Lỗi khởi tạo kết nối MongoDB: %v\n", err)
+		log.Printf("MongoDB Init Error: %v\n", err)
 	} else {
 		err = client.Ping(ctx, readpref.Primary())
 		if err != nil {
-			log.Printf("Không thể ping được tới MongoDB (có thể do sai mật khẩu): %v\n", err)
+			log.Printf("MongoDB Ping Error: %v\n", err)
 		} else {
-			log.Println("✅ Đã kết nối thành công tới MongoDB Atlas!")
+			log.Println("✅ Connected to MongoDB Atlas!")
 			mongoClient = client
+			sessionsCollection = client.Database("photobooth").Collection("sessions")
 		}
 	}
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// Allow CORS for local dev
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+	// Middleware for CORS
+	withCORS := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if r.Method == "OPTIONS" {
+				return
+			}
+			h(w, r)
+		}
+	}
 
+	mux.HandleFunc("/api/status", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		dbStatus := "disconnected"
 		if mongoClient != nil {
 			dbStatus = "connected"
 		}
-
 		json.NewEncoder(w).Encode(StatusResponse{
 			Status:  "ok",
-			Message: "Photobooth backend is running!",
+			Message: "Backend running",
 			DB:      dbStatus,
 		})
-	})
+	}))
 
-	log.Println("Server đang chạy tại http://localhost:8080")
+	mux.HandleFunc("/api/sessions", withCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var sess Session
+			if err := json.NewDecoder(r.Body).Decode(&sess); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			sess.CreatedAt = time.Now()
+			
+			if sessionsCollection != nil {
+				res, err := sessionsCollection.InsertOne(context.TODO(), sess)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				sess.ID = res.InsertedID.(primitive.ObjectID)
+			} else {
+				sess.ID = primitive.NewObjectID() // Mock ID if DB is down
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(sess)
+		}
+	}))
+
+	log.Println("Server running at http://localhost:8080")
 	if err := http.ListenAndServe(":8080", mux); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
