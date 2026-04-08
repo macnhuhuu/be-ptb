@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -93,8 +94,11 @@ func main() {
 		})
 	}))
 
-	mux.HandleFunc("/api/sessions", withCORS(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/sessions/", withCORS(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Printf("Incoming request: %s %s\n", r.Method, r.URL.Path)
+
 		// --- TRƯỜNG HỢP POST (LƯU ẢNH) ---
+		// Khớp với /api/sessions hoặc /api/sessions/
 		if r.Method == http.MethodPost {
 			var sess Session
 			if err := json.NewDecoder(r.Body).Decode(&sess); err != nil {
@@ -120,26 +124,25 @@ func main() {
 		}
 
 		// --- TRƯỜNG HỢP GET (LẤY ẢNH QUA ID) ---
-		// URL có dạng /api/sessions/643...
 		if r.Method == http.MethodGet {
-			path := strings.TrimPrefix(r.URL.Path, "/api/sessions")
-			idStr := strings.TrimPrefix(path, "/")
+			idStr := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+			idStr = strings.TrimSpace(idStr)
 			
-			if idStr == "" {
-				http.Error(w, "Thiếu ID phiên chụp", http.StatusBadRequest)
+			if idStr == "" || idStr == "/api/sessions" {
+				http.Error(w, "Vui lòng cung cấp ID phiên chụp", http.StatusBadRequest)
 				return
 			}
 
 			objID, err := primitive.ObjectIDFromHex(idStr)
 			if err != nil {
-				http.Error(w, "Định dạng ID không hợp lệ: "+idStr, http.StatusBadRequest)
+				http.Error(w, "Mã ID không đúng định dạng: "+idStr, http.StatusBadRequest)
 				return
 			}
 
 			var sess Session
 			err = sessionsCollection.FindOne(context.TODO(), bson.M{"_id": objID}).Decode(&sess)
 			if err != nil {
-				http.Error(w, "Không tìm thấy phiên chụp trong MongoDB", http.StatusNotFound)
+				http.Error(w, "Không tìm thấy dữ liệu ảnh cho ID này", http.StatusNotFound)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
